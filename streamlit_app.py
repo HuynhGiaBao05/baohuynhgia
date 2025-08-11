@@ -159,6 +159,16 @@ with tab3:
     else:
         st.info("Chưa có dữ liệu thời gian hợp lệ hoặc không có cột 'Inventory'.")
 
+            # --- Thêm heatmap ma trận tương quan ---
+    if {'Import_Qty', 'Export_Qty', 'Inventory'}.issubset(df_vis.columns):
+        st.subheader("📈 Ma trận tương quan giữa các biến số")
+        corr_df = df_vis[['Import_Qty', 'Export_Qty', 'Inventory']].corr()
+        fig_corr, ax_corr = plt.subplots(figsize=(6, 4))
+        sns.heatmap(corr_df, annot=True, cmap='YlGnBu', fmt='.2f', ax=ax_corr)
+        plt.title('Ma trận tương quan giữa các biến số')
+        plt.tight_layout()
+        st.pyplot(fig_corr)
+
 with tab4:
     st.header("🤖 Dự báo — Linear Regression")
     df_model = st.session_state.get('df_clean', df.copy())
