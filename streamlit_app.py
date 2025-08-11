@@ -1,223 +1,245 @@
-# streamlit_app.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
-import numpy as np
 import os
 
 st.set_page_config(page_title="PCB Inventory Analysis", layout="wide")
-st.title("📦 PCB Inventory — Analysis & Prediction")
+st.title("📦 PCB Inventory — Phân tích & Dự báo")
 
-# ---------- Settings ----------
+# --- Cách 1: Nếu chạy trên máy cá nhân, file CSV cùng thư mục ---
 CSV_FILENAME = "pcb_inventory_with_text.csv"
 
-# ---------- Load data ----------
-@st.cache_data(ttl=300)
-def load_data(path):
-    if not os.path.exists(path):
-        return None
+# --- Cách 2: Nếu trên hosting, dùng URL tải file --- 
+# CSV_FILENAME = "https://raw.githubusercontent.com/username/repo/main/pcb_inventory_with_text.csv"
+
+@st.cache_data(ttl=600)
+def load_data(path_or_url):
     try:
-        df = pd.read_csv(path)
+        df = pd.read_csv(path_or_url)
         return df
     except Exception as e:
-        st.error(f"Không đọc được file CSV: {e}")
+        st.error(f"Không tải được file CSV: {e}")
         return None
 
 df = load_data(CSV_FILENAME)
 
 if df is None:
-    st.warning(f"Không tìm thấy file `{CSV_FILENAME}` trong thư mục làm việc. "
-               "Hãy chắc chắn file đặt cùng thư mục với `streamlit_app.py`.")
     st.stop()
 
-# ---------- Sidebar controls ----------
-st.sidebar.header("Tùy chọn")
-show_raw = st.sidebar.checkbox("Hiển thị dữ liệu thô (5 dòng)", value=True)
-dropna_opt = st.sidebar.checkbox("Tự động drop các dòng có giá trị thiếu", value=True)
-dropdup_opt = st.sidebar.checkbox("Tự động drop dòng trùng lặp", value=True)
-test_size = st.sidebar.slider("Tỉ lệ test cho mô hình", 0.05, 0.5, 0.2, 0.05)
-random_state = st.sidebar.number_input("random_state (mô hình)", value=42, step=1)
+# Hiển thị 5 dòng đầu tiên
+st.subheader("📌 5 dòng đầu tiên")
+st.dataframe(df.head())
 
-# ---------- Basic info / cleaning ----------
-tab1, tab2, tab3, tab4 = st.tabs(["Tổng quan", "Tiền xử lý", "Biểu đồ", "Dự báo"])
+# Kiểu dữ liệu từng cột
+st.subheader("🔍 Kiểu dữ liệu từng cột")
+st.write(df.dtypes)
 
-with tab1:
-    st.header("🔎 Tổng quan dữ liệu")
-    st.write(f"**Source file:** `{CSV_FILENAME}` — kích thước ban đầu: {df.shape[0]} dòng × {df.shape[1]} cột")
-    if show_raw:
-        st.dataframe(df.head())
+# Phân loại cột số và cột văn bản
+numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+text_cols = df.select_dtypes(include=['object']).columns.tolist()
+st.write(f"🔢 Cột số: {numeric_cols}")
+st.write(f"🔤 Cột văn bản: {text_cols}")
 
-    st.subheader("🔍 Kiểu dữ liệu")
-    st.write(df.dtypes)
+# Thống kê mô tả dữ liệu số
+st.subheader("📈 Thống kê mô tả dữ liệu số")
+st.write(df[numeric_cols].describe())
 
-    # detect numeric / text cols
-    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
-    text_cols = df.select_dtypes(include=['object']).columns.tolist()
-    st.write("🔢 Cột số:", numeric_cols)
-    st.write("🔤 Cột văn bản:", text_cols)
+# Thống kê giá trị cột văn bản
+for col in text_cols:
+    st.subheader(f"📊 Thống kê giá trị cột '{col}'")
+    st.write(df[col].value_counts())
 
-with tab2:
-    st.header("🧹 Tiền xử lý và chuẩn hoá")
-    df_clean = df.copy()
+# XỬ LÝ GIÁ TRỊ NULL
+st.subheader("📌 Giá trị thiếu theo cột (trước xử lý)")
+st.write(df.isnull().sum())
 
-    # show null counts
-    st.subheader("📌 Giá trị thiếu theo cột (trước xử lý)")
-    st.write(df_clean.isnull().sum())
+before_dropna = df.shape[0]
+df = df.dropna()
+after_dropna = df.shape[0]
+st.success(f"✅ Đã xoá {before_dropna - after_dropna} dòng có giá trị thiếu")
+st.write("📌 Giá trị thiếu sau xử lý")
+st.write(df.isnull().sum())
 
-    # dropna option
-    if dropna_opt:
-        before = df_clean.shape[0]
-        df_clean = df_clean.dropna()
-        st.write(f"✅ Đã drop {before - df_clean.shape[0]} dòng có giá trị thiếu.")
+# XỬ LÝ DÒNG TRÙNG LẶP
+before_duplicates = df.shape[0]
+df = df.drop_duplicates()
+after_duplicates = df.shape[0]
+st.success(f"✅ Đã xoá {before_duplicates - after_duplicates} dòng trùng lặp")
 
-    # drop duplicates
-    if dropdup_opt:
-        before = df_clean.shape[0]
-        df_clean = df_clean.drop_duplicates()
-        st.write(f"✅ Đã drop {before - df_clean.shape[0]} dòng trùng lặp.")
+# Chuẩn hóa văn bản
+if 'Shift' in df.columns:
+    df['Shift'] = df['Shift'].astype(str).str.strip().str.title()
+if 'Product_Type' in df.columns:
+    df['Product_Type'] = df['Product_Type'].astype(str).str.strip().str.upper()
 
-    # Normalize text columns if exist
-    if 'Shift' in df_clean.columns:
-        df_clean['Shift'] = df_clean['Shift'].astype(str).str.strip().str.title()
-    if 'Product_Type' in df_clean.columns:
-        df_clean['Product_Type'] = df_clean['Product_Type'].astype(str).str.strip().str.upper()
+# Chuẩn hóa ngày tháng
+if 'Week' in df.columns:
+    df['Week'] = pd.to_datetime(df['Week'], errors='coerce')
+    before_date_drop = df.shape[0]
+    df = df.dropna(subset=['Week'])
+    after_date_drop = df.shape[0]
+    st.info(f"⏳ Đã loại {before_date_drop - after_date_drop} dòng do lỗi ngày tháng không parse được")
+    df = df.set_index('Week')
+else:
+    st.warning("Không tìm thấy cột 'Week' để làm chỉ mục thời gian.")
 
-    # Parse Week column (tự động phát hiện tên 'Week' hoặc 'Date')
-    date_col = None
-    for candidate in ['Week', 'Date', 'Datetime', 'Time']:
-        if candidate in df_clean.columns:
-            date_col = candidate
-            break
+# Kiểm tra kiểu dữ liệu cuối cùng
+st.write("📅 Kiểu dữ liệu cuối cùng:")
+st.write(df.dtypes)
 
-    if date_col:
-        st.write(f"⏱️ Dùng cột thời gian: `{date_col}` — chuyển sang datetime")
-        df_clean[date_col] = pd.to_datetime(df_clean[date_col], errors='coerce')
-        before = df_clean.shape[0]
-        df_clean = df_clean.dropna(subset=[date_col])
-        st.write(f"✅ Đã loại {before - df_clean.shape[0]} dòng do lỗi ngày tháng (không parse được).")
-        df_clean = df_clean.set_index(date_col)
+st.subheader("✅ 5 dòng đầu sau chuẩn hóa")
+st.dataframe(df.head())
+
+# Tổng quan ca làm việc
+st.subheader("🔤 Tần suất xuất hiện của từng ca làm việc")
+if 'Shift' in df.columns:
+    st.write(df['Shift'].value_counts())
+else:
+    st.info("Không có cột 'Shift'.")
+
+# Tổng quan loại sản phẩm
+st.subheader("🔤 Tần suất xuất hiện của từng loại sản phẩm")
+if 'Product_Type' in df.columns:
+    st.write(df['Product_Type'].value_counts())
+else:
+    st.info("Không có cột 'Product_Type'.")
+
+# Thống kê tồn kho trung bình theo ca làm việc
+if 'Shift' in df.columns and 'Inventory' in df.columns:
+    st.subheader("📦 Trung bình tồn kho theo ca làm việc")
+    st.write(df.groupby('Shift')['Inventory'].describe())
+else:
+    st.info("Thiếu cột 'Shift' hoặc 'Inventory' để thống kê.")
+
+# Thống kê tồn kho trung bình theo loại sản phẩm
+if 'Product_Type' in df.columns and 'Inventory' in df.columns:
+    st.subheader("📦 Trung bình tồn kho theo loại sản phẩm")
+    st.write(df.groupby('Product_Type')['Inventory'].describe())
+else:
+    st.info("Thiếu cột 'Product_Type' hoặc 'Inventory' để thống kê.")
+
+# Một số thống kê tổng hợp theo ngày
+if df.index.dtype.kind == 'M':  # Kiểm tra kiểu datetime index
+    st.subheader("=== 1. 📦 Số lượng sản phẩm theo ngày (đếm số lần xuất hiện)")
+    product_count_daily = df.groupby([df.index.date, 'Product_Type']).size().unstack(fill_value=0)
+    st.dataframe(product_count_daily.tail(10))
+
+    st.subheader("=== 2. 📥 Sản phẩm được thu thập theo thời gian (tổng số nhập)")
+    if {'Import_Qty', 'Product_Type'}.issubset(df.columns):
+        import_sum_by_product = df.groupby([df.index.date, 'Product_Type'])['Import_Qty'].sum().unstack(fill_value=0)
+        st.dataframe(import_sum_by_product.tail(10))
     else:
-        st.info("Không tìm thấy cột thời gian tiêu chuẩn ('Week', 'Date', 'Datetime', 'Time'). Nếu có cột thời gian khác, đổi tên thành 'Week' hoặc 'Date' để kích hoạt phân tích theo thời gian.")
+        st.info("Thiếu cột 'Import_Qty' hoặc 'Product_Type' để thống kê.")
 
-    st.subheader("📌 Kiểu dữ liệu sau tiền xử lý")
-    st.write(df_clean.dtypes)
-    st.session_state['df_clean'] = df_clean  # lưu tạm để tab khác dùng
-    st.success("Tiền xử lý hoàn tất — chuyển sang tab 'Biểu đồ' hoặc 'Dự báo'.")
+    st.subheader("=== 3. 🕒 10 dòng dữ liệu gần nhất")
+    latest_10_rows = df.sort_index(ascending=False).head(10)
+    st.dataframe(latest_10_rows)
+else:
+    st.info("Không có dữ liệu thời gian hợp lệ để thống kê theo ngày.")
 
-with tab3:
-    st.header("📊 Visualizations")
-    df_vis = st.session_state.get('df_clean', df.copy())
+# --- Vẽ biểu đồ ---
+st.subheader("📊 Biểu đồ phân bố")
 
-    # show counts
-    st.subheader("🔤 Tần suất ca / loại sản phẩm")
-    cols = st.columns(2)
-    if 'Shift' in df_vis.columns:
-        fig1, ax1 = plt.subplots(figsize=(6, 3))
-        sns.countplot(data=df_vis.reset_index(), x='Shift', order=df_vis['Shift'].value_counts().index, ax=ax1)
-        ax1.set_title("Phân bố theo Shift")
-        cols[0].pyplot(fig1)
-    else:
-        cols[0].info("Không có cột 'Shift' để vẽ.")
+fig, axes = plt.subplots(1, 2, figsize=(12,4))
 
-    if 'Product_Type' in df_vis.columns:
-        fig2, ax2 = plt.subplots(figsize=(6, 3))
-        sns.countplot(data=df_vis.reset_index(), x='Product_Type', order=df_vis['Product_Type'].value_counts().index, ax=ax2)
-        ax2.set_title("Phân bố theo Product_Type")
-        cols[1].pyplot(fig2)
-    else:
-        cols[1].info("Không có cột 'Product_Type' để vẽ.")
+if 'Shift' in df.columns:
+    sns.countplot(data=df.reset_index(), x='Shift', palette='Set2', ax=axes[0])
+    axes[0].set_title("Phân bố theo ca sản xuất")
+else:
+    axes[0].text(0.5, 0.5, "Không có cột 'Shift'", ha='center', va='center')
 
-    # boxplot inventory by shift
-    if 'Inventory' in df_vis.columns and 'Shift' in df_vis.columns:
-        st.subheader("📦 Tồn kho theo ca (Boxplot)")
-        fig3, ax3 = plt.subplots(figsize=(8, 4))
-        sns.boxplot(data=df_vis.reset_index(), x='Shift', y='Inventory', ax=ax3)
-        ax3.set_xlabel('Shift')
-        ax3.set_ylabel('Inventory')
-        st.pyplot(fig3)
+if 'Product_Type' in df.columns:
+    sns.countplot(data=df.reset_index(), x='Product_Type', palette='Set3', ax=axes[1])
+    axes[1].set_title("Phân bố theo loại sản phẩm")
+else:
+    axes[1].text(0.5, 0.5, "Không có cột 'Product_Type'", ha='center', va='center')
 
-    # stacked bar Import/Export by product type
-    if {'Import_Qty', 'Export_Qty', 'Product_Type'}.issubset(df_vis.columns):
-        st.subheader("📥/📤 Tổng Nhập - Xuất theo loại sản phẩm")
-        grouped = df_vis.groupby('Product_Type')[['Import_Qty', 'Export_Qty']].sum().sort_values('Import_Qty', ascending=False)
-        st.dataframe(grouped)
-        fig4 = grouped.plot(kind='bar', figsize=(8,4)).get_figure()
-        st.pyplot(fig4)
+plt.tight_layout()
+st.pyplot(fig)
 
-    # time series inventory
-    if df_vis.index.dtype.kind == 'M' and 'Inventory' in df_vis.columns:
-        st.subheader("📈 Xu hướng tồn kho theo thời gian")
-        fig5, ax5 = plt.subplots(figsize=(10,4))
-        sns.lineplot(x=df_vis.index, y='Inventory', data=df_vis, marker='o', ax=ax5)
-        ax5.set_xlabel("Date")
-        ax5.set_ylabel("Inventory")
-        st.pyplot(fig5)
-    else:
-        st.info("Chưa có dữ liệu thời gian hợp lệ hoặc không có cột 'Inventory'.")
+# Boxplot tồn kho theo ca sản xuất
+if {'Shift', 'Inventory'}.issubset(df.columns):
+    st.subheader("📦 Tồn kho theo ca sản xuất (Boxplot)")
+    fig2, ax2 = plt.subplots(figsize=(6,5))
+    sns.boxplot(data=df.reset_index(), x='Shift', y='Inventory', palette='coolwarm', ax=ax2)
+    ax2.set_xlabel('Ca sản xuất')
+    ax2.set_ylabel('Số lượng tồn kho')
+    ax2.grid(True)
+    st.pyplot(fig2)
 
-            # --- Thêm heatmap ma trận tương quan ---
-    if {'Import_Qty', 'Export_Qty', 'Inventory'}.issubset(df_vis.columns):
-        st.subheader("📈 Ma trận tương quan giữa các biến số")
-        corr_df = df_vis[['Import_Qty', 'Export_Qty', 'Inventory']].corr()
-        fig_corr, ax_corr = plt.subplots(figsize=(6, 4))
-        sns.heatmap(corr_df, annot=True, cmap='YlGnBu', fmt='.2f', ax=ax_corr)
-        plt.title('Ma trận tương quan giữa các biến số')
-        plt.tight_layout()
-        st.pyplot(fig_corr)
+# Biểu đồ thanh tổng hợp Import_Qty và Export_Qty theo loại sản phẩm
+if {'Product_Type', 'Import_Qty', 'Export_Qty'}.issubset(df.columns):
+    st.subheader("📊 Tổng Nhập - Xuất theo loại sản phẩm")
+    grouped_sum = df.groupby('Product_Type')[['Import_Qty', 'Export_Qty']].sum().reset_index()
+    fig3, ax3 = plt.subplots(figsize=(8,5))
+    grouped_sum.plot(x='Product_Type', kind='bar', color=['skyblue', 'coral'], ax=ax3)
+    ax3.set_ylabel('Số lượng')
+    ax3.set_xticklabels(grouped_sum['Product_Type'], rotation=0)
+    ax3.grid(axis='y')
+    st.pyplot(fig3)
 
-with tab4:
-    st.header("🤖 Dự báo — Linear Regression")
-    df_model = st.session_state.get('df_clean', df.copy())
+# Xu hướng tồn kho theo thời gian
+if df.index.dtype.kind == 'M' and 'Inventory' in df.columns:
+    st.subheader("📈 Xu hướng tồn kho PCB theo thời gian")
+    fig4, ax4 = plt.subplots(figsize=(10,5))
+    sns.lineplot(data=df, x=df.index, y='Inventory', marker='o', color='steelblue', ax=ax4)
+    ax4.set_xlabel('Ngày')
+    ax4.set_ylabel('Số lượng tồn kho')
+    ax4.grid(True)
+    st.pyplot(fig4)
 
-    # check required columns
-    req_cols = {'Inventory', 'Import_Qty', 'Export_Qty'}
-    if not req_cols.issubset(df_model.columns):
-        st.warning(f"Thiếu một trong các cột cần thiết cho mô hình: {req_cols}. Không thể huấn luyện.")
-    else:
-        # one-hot encode categorical if any
-        cat_cols = [c for c in ['Shift', 'Product_Type'] if c in df_model.columns]
-        df_encoded = pd.get_dummies(df_model.reset_index(), columns=cat_cols, drop_first=True)
-        # ensure numeric only for X
-        X = df_encoded.drop(columns=['Inventory'])
-        y = df_encoded['Inventory']
+# Ma trận tương quan
+if {'Import_Qty', 'Export_Qty', 'Inventory'}.issubset(df.columns):
+    st.subheader("📉 Ma trận tương quan giữa các biến số")
+    fig5, ax5 = plt.subplots(figsize=(6,4))
+    sns.heatmap(df[['Import_Qty', 'Export_Qty', 'Inventory']].corr(), annot=True, cmap='YlGnBu', fmt='.2f', ax=ax5)
+    st.pyplot(fig5)
 
-        # align shapes (drop non-numeric columns if remain)
-        X = X.select_dtypes(include=[np.number])
+# --- Mô hình hồi quy tuyến tính ---
+st.subheader("🤖 Dự báo tồn kho bằng Linear Regression")
 
-        # split
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=int(random_state))
+# Chuẩn bị dữ liệu cho mô hình
+if {'Inventory', 'Import_Qty', 'Export_Qty'}.issubset(df.columns):
+    df_encoded = pd.get_dummies(df, columns=['Shift', 'Product_Type'])
 
-        model = LinearRegression()
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
+    df_encoded = df_encoded.dropna(subset=['Import_Qty', 'Export_Qty', 'Inventory'])
 
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-        r2 = r2_score(y_test, y_pred)
+    X = df_encoded.drop('Inventory', axis=1)
+    y = df_encoded['Inventory']
 
-        st.subheader("Kết quả đánh giá mô hình")
-        st.write(f"📉 RMSE: **{rmse:.4f}**")
-        st.write(f"📈 R²: **{r2:.4f}**")
+    # Chỉ chọn cột số
+    X = X.select_dtypes(include=[np.number])
 
-        # show a small comparison table
-        compare_df = pd.DataFrame({
-            'y_true': y_test.values,
-            'y_pred': np.round(y_pred, 2)
-        }).reset_index(drop=True)
-        st.subheader("So sánh một số giá trị thực vs dự báo")
-        st.dataframe(compare_df.head(10))
+    test_size = st.sidebar.slider("Tỉ lệ test cho mô hình", 0.05, 0.5, 0.2, 0.05)
+    random_state = st.sidebar.number_input("Random state", value=42, step=1)
 
-        # Optional: show feature coefficients if features small
-        if X_train.shape[1] <= 30:
-            coef_df = pd.DataFrame({
-                'feature': X_train.columns,
-                'coefficient': model.coef_
-            }).sort_values(by='coefficient', key=abs, ascending=False)
-            st.subheader("Trọng số (coefficients) của các input")
-            st.dataframe(coef_df)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
 
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    r2 = r2_score(y_test, y_pred)
+
+    st.write(f"📉 RMSE: **{rmse:.4f}**")
+    st.write(f"📈 R²: **{r2:.4f}**")
+
+    compare_df = pd.DataFrame({'Thực tế': y_test.values, 'Dự báo': np.round(y_pred, 2)})
+    st.dataframe(compare_df.head(10))
+
+    if X_train.shape[1] <= 30:
+        coef_df = pd.DataFrame({'Feature': X_train.columns, 'Coefficient': model.coef_}).sort_values(by='Coefficient', key=abs, ascending=False)
+        st.subheader("Trọng số các đặc trưng (coefficients)")
+        st.dataframe(coef_df)
+else:
+    st.info("Thiếu cột 'Inventory', 'Import_Qty' hoặc 'Export_Qty' để huấn luyện mô hình.")
+
+# --- Kết thúc ---
 st.sidebar.markdown("---")
-st.sidebar.write("Chạy: `streamlit run streamlit_app.py`")
+st.sidebar.write("Chạy lệnh: `streamlit run streamlit_app.py`")
